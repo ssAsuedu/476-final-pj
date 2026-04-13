@@ -1,1 +1,9 @@
 .env
+
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+final_project_tutorial.ipynb
+cse476_final_project_dev_data.json
+cse_476_final_project_test_data.json
+cse_476_final_project_answers.json
