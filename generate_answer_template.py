@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List
-
+from agent_loop import agent_loop
 
 INPUT_PATH = Path("cse_476_final_project_test_data.json")
 OUTPUT_PATH = Path("cse_476_final_project_answers.json")
@@ -32,10 +32,10 @@ def build_answers(questions: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     answers = []
     for idx, question in enumerate(questions, start=1):
         # Example: assume you have an agent loop that produces an answer string.
-        # real_answer = agent_loop(question["input"])
-        # answers.append({"output": real_answer})
-        placeholder_answer = f"Placeholder answer for question {idx}"
-        answers.append({"output": placeholder_answer})
+        real_answer = agent_loop(question["input"])
+        answers.append({"output": real_answer})
+        # placeholder_answer = f"Placeholder answer for question {idx}"
+        # answers.append({"output": placeholder_answer})
     return answers
 
 
