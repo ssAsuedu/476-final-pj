@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 from agent_loop import agent_loop
 
-INPUT_PATH = Path("cse_476_final_project_test_data.json")
+INPUT_PATH = Path("cse476_final_project_dev_data.json")
 OUTPUT_PATH = Path("cse_476_final_project_answers.json")
 
 
@@ -62,6 +62,7 @@ def validate_results(
 
 def main() -> None:
     questions = load_questions(INPUT_PATH)
+    questions = questions[:20] # limit to first 20 for testing
     answers = build_answers(questions)
 
     with OUTPUT_PATH.open("w") as fp:
