@@ -12,18 +12,19 @@ import dotenv
 
 dotenv.load_dotenv()
 
-API_KEY  = os.getenv("OPENAI_API_KEY")
+API_KEY  = os.getenv("OPENAI_API_KEY","")
 API_BASE = os.getenv("API_BASE", "https://openai.rc.asu.edu/v1")  
 MODEL    = os.getenv("MODEL_NAME", "qwen3-30b-a3b-instruct-2507")  
 
-cot_prompt = "You are an analytical reasoning assistant. Use step-by-step reasoning to solve the question, do not include any explanations or reasoning in your response, only the final answer. Keep your response as short as possible, do not describe your reasoning at all."
 
+#copy pasted from given notebook
+basesystem="You are a helpful assistant. Reply with only the final answer—no explanation."
 
-def chain_of_thought(question: str, 
-                    system: str = cot_prompt,
-                    model: str = MODEL,
-                    temperature: float = 0.0,
-                    timeout: int = 60) -> dict:
+def call_model_chat_completions(prompt: str,
+                                system: basesystem,
+                                model: str = MODEL,
+                                temperature: float = 0.0,
+                                timeout: int = 60) -> dict:
     """
     Calls an OpenAI-style /v1/chat/completions endpoint and returns:
     { 'ok': bool, 'text': str or None, 'raw': dict or None, 'status': int, 'error': str or None, 'headers': dict }
@@ -37,7 +38,7 @@ def chain_of_thought(question: str,
         "model": model,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user",   "content": question}
+            {"role": "user",   "content": prompt}
         ],
         "temperature": temperature,
         "max_tokens": 128,
@@ -50,10 +51,9 @@ def chain_of_thought(question: str,
         if status == 200:
             data = resp.json()
             text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            return text
-            #return {"ok": True, "text": text, "raw": data, "status": status, "error": None, "headers": hdrs}
+            return {"ok": True, "text": text, "raw": data, "status": status, "error": None, "headers": hdrs}
         else:
-           
+            # try best-effort to surface error text
             err_text = None
             try:
                 err_text = resp.json()
@@ -64,7 +64,82 @@ def chain_of_thought(question: str,
         return {"ok": False, "text": None, "raw": None, "status": -1, "error": str(e), "headers": {}}
 
 
+def self_evaluate(question, prediction, expected_answer, model=MODEL):
+    """
+    Use the model itself as a strict grader.
+    Returns True if the model says the prediction matches the expected answer; else False.
+    Falls back to a simple normalized string compare if the model's reply is malformed.
+    """
+    import re
+
+    system = "You are a strict grader. Reply with exactly True or False. No punctuation. No explanation."
+    prompt = f"""You are grading a question-answer pair.
+
+Return exactly True if the PREDICTION would be accepted as correct for the EXPECTED_ANSWER.
+Otherwise, return False.
+
+QUESTION:
+{question}
+
+PREDICTION:
+{prediction}
+
+EXPECTED_ANSWER:
+{expected_answer}
+
+Answer with exactly: True or False
+"""
+
+    r = call_model_chat_completions(
+        prompt,
+        system=system,
+        model=model,
+        temperature=0.0,
+    )
+
+    reply = (r.get("text") or "").strip().lower()
+    if reply.startswith("true"):
+        return True
+    if reply.startswith("false"):
+        return False
+
+    # Fallback: simple normalization-based equality
+    norm = lambda s: re.sub(r"\s+", " ", (s or "").strip().lower())
+    return norm(prediction) == norm(expected_answer)
+
+
+
+
 def agent_loop(question: str) -> str:
    
     answer = chain_of_thought(question)
     return f"{answer}"
+
+
+
+def chain_of_thought(question: str) -> str:
+    #simple chain of thought, just tell the system what you want it to do
+    cot_system = "You are an analytical reasoning assistant. Use step-by-step reasoning to solve the question."
+    answer=call_model_chat_completions(prompt: question, system: cot_system, model: MODEL,
+                                temperature: 0.0,
+                                timeout: 60)
+    return answer
+
+
+def best_of_n(question: str, n: int) ->str:
+    
+    for i in n:
+        answer=call_model_chat_completions(prompt: question,
+                                system: basesystem,
+                                model: str = MODEL,
+                                temperature: float = 0.0,
+                                timeout: int = 60)
+        validity=self_evaluate(question, answer, expected_answer, model=MODEL)
+        if validity="True":
+            return answer
+        else
+            best_answer=answer
+    
+    return best_answer
+        
+
