@@ -107,12 +107,70 @@ Answer with exactly: True or False
     norm = lambda s: re.sub(r"\s+", " ", (s or "").strip().lower())
     return norm(prediction) == norm(expected_answer)
 
+def self_evaluate_tests(tests, model=MODEL, grader_model=None, sleep_sec=0.2, verbose=True):
+    """
+    Run the tests by querying the model for each prompt, then use LLM-as-a-judge
+    (self_evaluate) to determine correctness.
 
+    Args:
+        tests: list of dicts with keys: id, prompt, expected (and optionally type)
+        model: model used to generate predictions
+        grader_model: model used to judge correctness (defaults to `model` if None)
+        sleep_sec: small delay between calls to be polite to the API
+        verbose: if True, print a summary line per test
+
+    Returns:
+        rows: list of dicts with fields:
+              id, expected, got, correct, status, error
+    """
+    import time
+
+    judge_model = grader_model or model
+    rows = []
+
+    for t in tests:
+        # 1) Get model prediction
+        r = call_model_chat_completions(
+            t["prompt"],
+            system="You are a careful solver. Reply ONLY with the final answer, nothing else.",
+            model=model,
+            temperature=0.0,
+        )
+        got = (r.get("text") or "").strip()
+
+        # 2) LLM-as-a-judge: strict True/False
+        is_correct = self_evaluate(
+            question=t["prompt"],
+            prediction=got,
+            expected_answer=t["expected"],
+            model=judge_model,
+        )
+
+        row = {
+            "id": t.get("id", "<unnamed>"),
+            "expected": t["expected"],
+            "got": got,
+            "correct": bool(is_correct),
+            "status": r.get("status"),
+            "error": r.get("error"),
+        }
+        rows.append(row)
+
+        if verbose:
+            mark = "✅" if is_correct else "❌"
+            print(f"{mark} {row['id']}: expected={row['expected']!r}, got={row['got']!r} (HTTP {row['status']})")
+            if row["error"]:
+                print("   error:", row["error"])
+
+        if sleep_sec:
+            time.sleep(sleep_sec)
+
+    return rows
 
 
 def agent_loop(question: str) -> str:
    
-    answer = chain_of_thought(question)
+    answer = best_of_n(question, n=3)
     return f"{answer}"
 
 
@@ -121,25 +179,25 @@ def chain_of_thought(question: str) -> str:
     #simple chain of thought, just tell the system what you want it to do
     cot_system = "You are an analytical reasoning assistant. Use step-by-step reasoning to solve the question."
     answer=call_model_chat_completions(prompt= question, system= cot_system, model= MODEL,
-                                temperature= 0.0,
+                                temperature= 0.5,
                                 timeout= 60)
-    return answer
+    return answer["text"]
 
 
 def best_of_n(question: str, n: int) ->str:
     
-    for i in n:
+    for i in range(n):
         answer=call_model_chat_completions(prompt= question, system= basesystem, model= MODEL,
-                                temperature= 0.0,
+                                temperature= 0.5,
                                 timeout= 60)
         
         validity=self_evaluate(question, answer, expected_answer=question, model=MODEL)
-        if validity=="True":
-            return answer
+        if validity:
+            return answer["text"]
         else:
             best_answer=answer
     
-    return best_answer
+    return best_answer["text"]
 
 def tree_of_thought(question: str) ->str:
     #use a bfs-like structure to go through steps of a question, returns answer if all steps are true
@@ -149,28 +207,46 @@ def tree_of_thought(question: str) ->str:
     "Only output the problem step based off of previous steps, if available. If no more steps needed, give the answer."
     steps=[]
     totqueue=[]
-    branch_dict={}
-    while totqueue:
-        branch=call_model_chat_completions(prompt= question,
+
+    #adds first step as root node
+    #we assume the first step is automatically valid so we can reduce llm calls
+    branch=call_model_chat_completions(prompt= question,
                                 system= tot_system,
                                 model = MODEL,
-                                temperature= 0.0,
+                                temperature= 0.5,
+                                timeout= 60)
+    steps.append(branch)
+    #root has its own dict, and the leafs have their own
+    root_dict={}
+    root_dict["all_steps"]=steps
+    root_dict["current_step"]=branch
+    root_dict["validity"]=True
+    totqueue.append(root_dict)
+   
+    
+    while totqueue:
+        item=totqueue.pop()
+        newprompt=question+"Steps: "+ "\n".join(item["all_steps"])
+        branch=call_model_chat_completions(prompt= newprompt,
+                                system= tot_system,
+                                model = MODEL,
+                                temperature= 0.5,
                                 timeout= 60)
         validity=self_evaluate(question, branch, expected_answer=question, model=MODEL)
-        if validity=="True":
-        
-            steps.append(branch)
-            branch_dict["all_steps"]=steps
+        if validity: 
+            branch_dict={}       
+            # steps.append(branch)
+            branch_dict["all_steps"]=item["all_steps"]
             branch_dict["current_step"]=branch
             branch_dict["validity"]=validity
-        
-        if "ANSWER" in branch:
-            return branch
+            if "ANSWER" in branch:
+                return branch
+            totqueue.append(branch_dict)      
         else:
             best_answer=branch
 
 
-    return branch       
+    return best_answer      
 
 
 
