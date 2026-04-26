@@ -64,10 +64,11 @@ def call_model_chat_completions(prompt: str,
         return {"ok": False, "text": None, "raw": None, "status": -1, "error": str(e), "headers": {}}
 
 
-def self_evaluate(question, prediction, expected_answer, model=MODEL):
+#modified version of self_evaluate where expected_answer is not needed, llm determines if the answer makes sense in context of question
+def self_evaluate(question, prediction, model=MODEL):
     """
     Use the model itself as a strict grader.
-    Returns True if the model says the prediction matches the expected answer; else False.
+    Returns True if the model says the prediction matches the question type; else False.
     Falls back to a simple normalized string compare if the model's reply is malformed.
     """
     import re
@@ -75,7 +76,7 @@ def self_evaluate(question, prediction, expected_answer, model=MODEL):
     system = "You are a strict grader. Reply with exactly True or False. No punctuation. No explanation."
     prompt = f"""You are grading a question-answer pair.
 
-Return exactly True if the PREDICTION would be accepted as correct for the EXPECTED_ANSWER.
+Return exactly True if the PREDICTION would be accepted as correct for the QUESTION based on question type.
 Otherwise, return False.
 
 QUESTION:
@@ -83,9 +84,6 @@ QUESTION:
 
 PREDICTION:
 {prediction}
-
-EXPECTED_ANSWER:
-{expected_answer}
 
 Answer with exactly: True or False
 """
@@ -105,79 +103,20 @@ Answer with exactly: True or False
 
     # Fallback: simple normalization-based equality
     norm = lambda s: re.sub(r"\s+", " ", (s or "").strip().lower())
-    return norm(prediction) == norm(expected_answer)
+    return norm(prediction) 
 
-def self_evaluate_tests(tests, model=MODEL, grader_model=None, sleep_sec=0.2, verbose=True):
-    """
-    Run the tests by querying the model for each prompt, then use LLM-as-a-judge
-    (self_evaluate) to determine correctness.
-
-    Args:
-        tests: list of dicts with keys: id, prompt, expected (and optionally type)
-        model: model used to generate predictions
-        grader_model: model used to judge correctness (defaults to `model` if None)
-        sleep_sec: small delay between calls to be polite to the API
-        verbose: if True, print a summary line per test
-
-    Returns:
-        rows: list of dicts with fields:
-              id, expected, got, correct, status, error
-    """
-    import time
-
-    judge_model = grader_model or model
-    rows = []
-
-    for t in tests:
-        # 1) Get model prediction
-        r = call_model_chat_completions(
-            t["prompt"],
-            system="You are a careful solver. Reply ONLY with the final answer, nothing else.",
-            model=model,
-            temperature=0.0,
-        )
-        got = (r.get("text") or "").strip()
-
-        # 2) LLM-as-a-judge: strict True/False
-        is_correct = self_evaluate(
-            question=t["prompt"],
-            prediction=got,
-            expected_answer=t["expected"],
-            model=judge_model,
-        )
-
-        row = {
-            "id": t.get("id", "<unnamed>"),
-            "expected": t["expected"],
-            "got": got,
-            "correct": bool(is_correct),
-            "status": r.get("status"),
-            "error": r.get("error"),
-        }
-        rows.append(row)
-
-        if verbose:
-            mark = "✅" if is_correct else "❌"
-            print(f"{mark} {row['id']}: expected={row['expected']!r}, got={row['got']!r} (HTTP {row['status']})")
-            if row["error"]:
-                print("   error:", row["error"])
-
-        if sleep_sec:
-            time.sleep(sleep_sec)
-
-    return rows
 
 
 def agent_loop(question: str) -> str:
    
-    answer = best_of_n(question, n=3)
+    answer = tree_of_thought(question)
     return f"{answer}"
 
 
 
 def chain_of_thought(question: str) -> str:
     #simple chain of thought, just tell the system what you want it to do
-    cot_system = "You are an analytical reasoning assistant. Use step-by-step reasoning to solve the question."
+    cot_system = "You are an analytical reasoning assistant. Use step-by-step reasoning to solve the question. Output with answer only. Do not put explanation in the answer."
     answer=call_model_chat_completions(prompt= question, system= cot_system, model= MODEL,
                                 temperature= 0.5,
                                 timeout= 60)
@@ -191,7 +130,7 @@ def best_of_n(question: str, n: int) ->str:
                                 temperature= 0.5,
                                 timeout= 60)
         
-        validity=self_evaluate(question, answer, expected_answer=question, model=MODEL)
+        validity=self_evaluate(question=question, prediction=answer, model=MODEL)
         if validity:
             return answer["text"]
         else:
@@ -202,9 +141,10 @@ def best_of_n(question: str, n: int) ->str:
 def tree_of_thought(question: str) ->str:
     #use a bfs-like structure to go through steps of a question, returns answer if all steps are true
     
-    tot_system="You are an analytical reasoning assistant. " \
-    "Use labels STEP for steps and ANSWER for the answer. " \
-    "Only output the problem step based off of previous steps, if available. If no more steps needed, give the answer."
+    tot_system=f"""You are a reasoning assistant that breaks down problems into steps.
+      Use labels STEP for steps and ANSWER for the answer. 
+      Only output the current step of the given problem based off of previous steps, if available. Label each step as "STEP: "
+      If no more steps needed, give the answer and label as "ANSWER: "."""
     steps=[]
     totqueue=[]
 
@@ -215,16 +155,19 @@ def tree_of_thought(question: str) ->str:
                                 model = MODEL,
                                 temperature= 0.5,
                                 timeout= 60)
-    steps.append(branch)
+    #limit number of llm calls to 20 per question
+    totalcalls=1
+    steps.append(branch["text"])
     #root has its own dict, and the leafs have their own
     root_dict={}
     root_dict["all_steps"]=steps
-    root_dict["current_step"]=branch
+    root_dict["current_step"]=branch["text"]
     root_dict["validity"]=True
-    totqueue.append(root_dict)
+    if branch["text"] != "None":
+        totqueue.append(root_dict)
    
     
-    while totqueue:
+    while totqueue and totalcalls <=20:
         item=totqueue.pop()
         newprompt=question+"Steps: "+ "\n".join(item["all_steps"])
         branch=call_model_chat_completions(prompt= newprompt,
@@ -232,18 +175,20 @@ def tree_of_thought(question: str) ->str:
                                 model = MODEL,
                                 temperature= 0.5,
                                 timeout= 60)
-        validity=self_evaluate(question, branch, expected_answer=question, model=MODEL)
-        if validity: 
+        totalcalls+=1
+        validity=self_evaluate(question=question, prediction=branch["text"], model=MODEL)
+        totalcalls+=1
+        if validity and branch["text"] != "None": 
             branch_dict={}       
             # steps.append(branch)
             branch_dict["all_steps"]=item["all_steps"]
-            branch_dict["current_step"]=branch
+            branch_dict["current_step"]=branch["text"]
             branch_dict["validity"]=validity
-            if "ANSWER" in branch:
-                return branch
+            if "ANSWER" in branch["text"]:
+                return branch["text"]
             totqueue.append(branch_dict)      
         else:
-            best_answer=branch
+            best_answer=branch["text"]
 
 
     return best_answer      
