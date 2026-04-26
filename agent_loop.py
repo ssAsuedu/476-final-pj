@@ -123,12 +123,13 @@ def chain_of_thought(question: str) -> str:
     answer=call_model_chat_completions(prompt= question, system= cot_system, model= MODEL,
                                 temperature= 0.0,
                                 timeout= 60)
-    return answer
+    return (answer.get("text") or "").strip()
+
 
 
 def best_of_n(question: str, n: int) ->str:
     
-    for i in n:
+    for i in range(n):
         answer=call_model_chat_completions(prompt= question, system= basesystem, model= MODEL,
                                 temperature= 0.0,
                                 timeout= 60)
@@ -172,7 +173,60 @@ def tree_of_thought(question: str) ->str:
 
     return branch       
 
+def self_consistency(question: str, samples: int = 3) -> str:
+    responses = []
+    for _ in range(samples):
+        result = call_model_chat_completions(
+            prompt=question,
+            system=basesystem,
+            temperature=0.7,
+        )
+        text = (result.get("text") or "").strip().lower()
+        if text:
+            responses.append(text)
+        time.sleep(0.1)
 
+    if not responses:
+        return ""
+
+    return max(set(responses), key=responses.count)
+
+def self_refine(question: str) -> str:
+    initial = chain_of_thought(question)
+    if not initial:
+        return ""
+
+    critique_prompt = (
+        f"Question: {question}\n\n"
+        f"Proposed answer: {initial}\n\n"
+        "Is this answer correct and complete? "
+        "Identify any errors or gaps in one or two sentences. "
+        "Do not give the corrected answer yet."
+    )
+    critique_result = call_model_chat_completions(
+        prompt=critique_prompt,
+        system="You are a careful critic. Be brief and specific.",
+        temperature=0.0,
+    )
+    critique = (critique_result.get("text") or "").strip()
+
+    if not critique:
+        return initial
+
+    refine_prompt = (
+        f"Question: {question}\n\n"
+        f"Initial answer: {initial}\n\n"
+        f"Critique: {critique}\n\n"
+        "Now give the corrected final answer only. No explanation."
+    )
+    refined_result = call_model_chat_completions(
+        prompt=refine_prompt,
+        system="You are a careful solver. Reply only with the final answer, nothing else.",
+        temperature=0.0,
+    )
+    refined = (refined_result.get("text") or "").strip()
+
+    return refined if refined else initial
 
 
 
