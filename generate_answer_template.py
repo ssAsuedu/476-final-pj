@@ -17,7 +17,8 @@ from typing import Any, Dict, List
 from agent_loop import agent_loop
 
 INPUT_PATH = Path("cse_476_final_project_test_data.json")
-OUTPUT_PATH = Path("cse_476_final_project_answers.json")
+OUTPUT_PATH = Path("34_67.json")
+#OUTPUT_PATH = Path("cse_476_final_project_answers.json")
 
 
 def load_questions(path: Path) -> List[Dict[str, Any]]:
@@ -65,7 +66,7 @@ def validate_results(
 
 def main() -> None:
     questions = load_questions(INPUT_PATH)
-    questions = questions[:2] # limit to first 20 for testing
+    questions = questions[34:67] # limit to first 20 for testing
     answers = build_answers(questions)
 
     with OUTPUT_PATH.open("w") as fp:
