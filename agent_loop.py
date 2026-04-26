@@ -110,7 +110,7 @@ Answer with exactly: True or False
 
 def agent_loop(question: str) -> str:
    
-    answer = tree_of_thought(question)
+    answer = route_question(question)
     return f"{answer}"
 
 
@@ -130,7 +130,7 @@ def best_of_n(question: str, n: int) ->str:
                                 temperature= 0.5,
                                 timeout= 60)
         
-        validity=self_evaluate(question=question, prediction=answer, model=MODEL)
+        validity=self_evaluate(question=question, prediction=answer["text"], model=MODEL)
         if validity:
             return answer["text"]
         else:
@@ -301,7 +301,6 @@ def tool_augmented_reasoning(question: str) -> str:
 
 def least_to_most(question: str) -> str:
     prompt = "Question: " + question + "\n\n" + "Break down the following problem into smaller sub-problems that need to be solved in order to reach a final answer. List the sub-problems you have identified."
-
     resp = call_model_chat_completions(
         prompt=prompt, 
         system="You are a logical reasoning assistant. Reduce the problem into simpler sub-problems."
