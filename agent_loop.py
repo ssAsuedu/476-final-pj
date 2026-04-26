@@ -9,6 +9,7 @@ or techniques.
 import os, json, textwrap, re, time
 import requests
 import dotenv
+import math
 
 dotenv.load_dotenv()
 
@@ -41,7 +42,7 @@ def call_model_chat_completions(prompt: str,
             {"role": "user",   "content": prompt}
         ],
         "temperature": temperature,
-        "max_tokens": 128,
+        "max_tokens": 1024,
     }
 
     try:
@@ -120,8 +121,7 @@ def chain_of_thought(question: str) -> str:
     answer=call_model_chat_completions(prompt= question, system= cot_system, model= MODEL,
                                 temperature= 0.5,
                                 timeout= 60)
-    return answer["text"]
-
+    return (answer.get("text") or "").strip()
 
 def best_of_n(question: str, n: int) ->str:
     
@@ -193,68 +193,185 @@ def tree_of_thought(question: str) ->str:
 
     return best_answer      
 
+def self_consistency(question: str, samples: int = 3) -> str:
+    responses = []
+    for _ in range(samples):
+        result = call_model_chat_completions(
+            prompt=question,
+            system=basesystem,
+            temperature=0.7,
+        )
+        text = (result.get("text") or "").strip().lower()
+        if text:
+            responses.append(text)
+        time.sleep(0.1)
 
+    if not responses:
+        return ""
 
-def tool_augmented_reasoning(question: str) ->str:
+    return max(set(responses), key=responses.count)
 
-    return ""
+def self_refine(question: str) -> str:
+    initial = chain_of_thought(question)
+    if not initial:
+        return ""
 
-MATH_KEYWORDS = [
-    "calculate", "compute", "evaluate", "solve", "how many", "probability", "difference", "$","¥", "£", "€", "+", "-", "*", "/", "equation", "formula", "=", "find the", "ration", "average", "product"
-]
-PLANNING_KEYWORDS = [
-    "[plan]", "[statement]", "actions"
-] 
-CODING_KEYWORDS = [
-    "code", " def ", "task_func", "implement", "algorithm", "function", "class", "write self-contained"
-]   
-LOGIC_KEYWORDS = [
-    "exchange", "complete the rest of", "swap"
-]
-CONTEXT_KEYWORDS = [
-   "facts:", "context:", "[doc]"
-]
-COMMON_SENSE_KEYWORDS = [
-    "can", "could", "would", "should", "were", "does", "did"
-]
-FUTURE_PREDICTION_KEYWORDS = [
-    "predict", "will happen", "\\boxed\{your_prediction\}", "predict future events"
-]
+    critique_prompt = (
+        f"Question: {question}\n\n"
+        f"Proposed answer: {initial}\n\n"
+        "Is this answer correct and complete? "
+        "Identify any errors or gaps in one or two sentences. "
+        "Do not give the corrected answer yet."
+    )
+    critique_result = call_model_chat_completions(
+        prompt=critique_prompt,
+        system="You are a careful critic. Be brief and specific.",
+        temperature=0.0,
+    )
+    critique = (critique_result.get("text") or "").strip()
 
+    if not critique:
+        return initial
 
-def is_mcq(question: str) -> bool:
-    question = question.lower()
-    return any(option in question for option in ["a: ", " (a) ", "options:" , "a. ", "a)"])
+    refine_prompt = (
+        f"Question: {question}\n\n"
+        f"Initial answer: {initial}\n\n"
+        f"Critique: {critique}\n\n"
+        "Now give the corrected final answer only. No explanation."
+    )
+    refined_result = call_model_chat_completions(
+        prompt=refine_prompt,
+        system="You are a careful solver. Reply only with the final answer, nothing else.",
+        temperature=0.0,
+    )
+    refined = (refined_result.get("text") or "").strip()
 
+    return refined if refined else initial
 
-def classify_question(question: str) -> str:
-    question = question.lower()
-    mcq = is_mcq(question)
-   
-    if  any(keyword in question for keyword in PLANNING_KEYWORDS):
-        return "tree_of_thought"
+def return_final_math_answer(question: str) ->str:
+    math_final_answer_prompt = "You are a data extraction bot. You must read the following input and extract the final mathemtatical answer. Your response should be ONLY the final result found in the text, either a number or variable. Do not include any other explanation. Here is the input:\n\n"
+
+    resp = call_model_chat_completions(
+        prompt=question, 
+        system=math_final_answer_prompt 
+    )
+    return resp.get("text", question).strip()
+
+def extract_final_answer(text: str) -> str:
+    final_answer_prompt = "You are a data extraction bot. You must read the following input and extract the final answer. Your response should be ONLY the final result found in the text, either a word, variable, or concise phrase. Do not include any other explanation. Here is the input:\n\n"
+
+    resp = call_model_chat_completions(
+        prompt=text, 
+        system=final_answer_prompt 
+    )
+    return resp.get("text", text).strip()
+
+def calculator(exp: str) -> str:
+    """Basic math evaluator."""
+    try:
+        final_expression = exp.replace('$', '').replace(',', '').strip()
+        return str(eval(final_expression, {"__builtins__": None}, {}))
+    except Exception as e:
+        return f"Error w calculator: {e}"
+
+def tool_augmented_reasoning(question: str) -> str:
+    math_assistant_prompt = (
+        "You are a math assistant. Think step-by-step to solve the problem. "
+        "Whenever you need to do arithmetic, put the expression inside double square brackets ike this: [[328 / 2]]. I will provide the result. "
+        "Once you have the final answer, state it clearly."
+    )
     
-    if any(keyword in question for keyword in CODING_KEYWORDS):
-        return "self_refine"
+    current_prompt = question
     
-    if is_mcq(question) or any(keyword in question for keyword in COMMON_SENSE_KEYWORDS):
-        return "best_of_n"
-    
-    if any(c in question for c in MATH_KEYWORDS) or any(char.isdigit() for char in question):
-        return "tool_augmented_reasoning"
+    for i in range(6):
+        resp = call_model_chat_completions(prompt=current_prompt, system=math_assistant_prompt)
+        text = resp.get("text", "")
+        calculation_required = re.search(r"\[\[(.*?)\]\]", text)
+        
+        if calculation_required:
+            equation = calculation_required.group(1)
+            result = calculator(equation)
+            current_prompt += f"\nAssistant: {text}\nResult of [[{equation}]]: {result}"
+        else:
+            return return_final_math_answer(text)
+            
+    return return_final_math_answer(text)
 
-    return "chain_of_thought"
-
-def route_question(question: str) -> str:
-    question = question.lower()
-    route = classify_question(question)
-    if route == "chain_of_thought":
-        return chain_of_thought(question)
-    elif route == "tree_of_thought":
-        return tree_of_thought(question)
-    elif route == "best_of_n":
-        return best_of_n(question, n=5)
-    elif route == "tool_augmented_reasoning":
-        return tool_augmented_reasoning(question)
         
 
+def least_to_most(question: str) -> str:
+    prompt = "Question: " + question + "\n\n" + "Break down the following problem into smaller sub-problems that need to be solved in order to reach a final answer. List the sub-problems you have identified."
+
+    resp = call_model_chat_completions(
+        prompt=prompt, 
+        system="You are a logical reasoning assistant. Reduce the problem into simpler sub-problems."
+    )
+    steps = resp.get("text", "")
+
+    new_prompt = ("Question: " + question + "\n\n" + "Sub-problems:\n" + steps + "\n\n" + "Now solve each sub-problem step by step to reach the final answer. Provide only the final answer in your response.")
+
+    final_response = call_model_chat_completions(
+        prompt=new_prompt, 
+        system="You are a logical reasoning assistant. Solve the sub-problems step by step to reach the final answer. Reply only with the final answer."
+    )
+
+    return extract_final_answer(final_response.get("text", ""))
+
+def route_question(question: str) -> str:
+    category = few_shot_prompt_classifier(question)
+    if category == "TOOL_AUGMENTED":
+        return tool_augmented_reasoning(question)
+    elif category == "TREE_OF_THOUGHT": 
+        return tree_of_thought(question)
+    elif category == "BEST_OF_N":
+        return best_of_n(question, n=5)
+    elif category == "SELF_REFINE":
+        return self_refine(question)
+    elif category == "SELF_CONSISTENCY":
+        return self_consistency(question, samples=5)
+    elif category == "LEAST_TO_MOST":
+        return least_to_most(question)
+    elif category == "CHAIN_OF_THOUGHT":
+        return chain_of_thought(question)
+    else:
+        return chain_of_thought(question) 
+
+
+def few_shot_prompt_classifier(question: str) -> str:
+      prompt = f"""You are a question routing assistant."
+      "Classify the following question into one of these categories: 
+       "1. TOOL_AUGMENTED: Multi-step math or problems requiring precise arithmetic.\n"
+        "2. SELF_REFINE: Coding tasks, debugging, or technical implementations.\n"
+        "3. TREE_OF_THOUGHT: Complex planning, logic puzzles, or branching scenarios.\n"
+        "4. CHAIN_OF_THOUGHT: General knowledge, common sense questions, explanations, or simple reasoning.\n\n"
+        "5. BEST_OF_N: Multiple choice questions, ambiguous queries, or when multiple valid answers exist.\n\n"
+        "6. SELF_CONSISTENCY: When the question asks you to make a future prediction. When the question is open-ended, subjective, or likely to have multiple valid perspectives.\n\n"
+        "7. LEAST_TO_MOST: For complex multi-step problems or sequential tasks that can be decomposed into a simpler set of subproblems."
+        "EXAMPLES:\n"
+        "Q: How many even integers between 4000 and 7000 have four different digits?\n"
+        "A: TOOL_AUGMENTED\n\n"
+        "Q: Scramble the letters in each word of a given text, keeping the first and last letters of each word intact.\nNote that: Notes: Words are determined by regex word boundaries. The scrambling only affects words longer than three characters, leaving shorter words unchanged.\nThe function should output with:\n    str: The scrambled text.\nYou should write self-contained code starting with:\n```\nimport random\nimport re\ndef task_func(text, seed=None):\n```\n"
+        "A: SELF_REFINE\n\n"
+        "Q: You are an agent that can predict future events. The event to be predicted: \"Will Mathieu van der Poel win the Green Jersey at the 2025 Tour de France? (around 2025-07-28T07:59:00Z). Will Mathieu van der Poel win the Green Jersey at the 2025 Tour de France?'\n"
+        "A: SELF_CONSISTENCY\n\n"
+        "Q: In what show did Cynthia Nixon receive the 2004 Primetime Emmy Award for Outstanding Supporting Actress in a Comedy Series and a Screen Actors Guild Award for her performance?\n"
+        "A: CHAIN_OF_THOUGHT\n\n"
+        "Q: Which of the following options is a common household pet? A. Car B. Dog. C. Apple D. Mosquito\n"
+        "A: BEST_OF_N\n\n"
+        "For long winded or complex questions, recommmend TREE_OF_THOUGHT.""
+        "For sequential multi-step problems that do not involve math, but require reasoning, recommend LEAST_TO_MOST."
+        "Now classify the following question. Reply with ONLY the category name."""
+
+      resp = call_model_chat_completions(prompt=question, system=prompt)
+      return (resp.get("text") or "").strip().upper()
+
+if __name__ == "__main__":
+
+    test_question = "Do people with swallowing disorders need high viscosity drinks? Facts: Swallowing disorders can make thin liquids like water dangerous to drink. Liquid thickeners are marketed towards people with difficulty drinking."
+    
+    print(f"question:\n{test_question}\n")
+    
+    final_answer = few_shot_prompt_classifier(test_question)
+    
+    print("answer: \n")
+    print(final_answer)
