@@ -9,6 +9,7 @@ or techniques.
 import os, json, textwrap, re, time
 import requests
 import dotenv
+import math
 
 dotenv.load_dotenv()
 
@@ -41,7 +42,7 @@ def call_model_chat_completions(prompt: str,
             {"role": "user",   "content": prompt}
         ],
         "temperature": temperature,
-        "max_tokens": 128,
+        "max_tokens": 1024,
     }
 
     try:
@@ -226,9 +227,46 @@ def self_refine(question: str) -> str:
 
     return refined if refined else initial
 
-def tool_augmented_reasoning(question: str) ->str:
+def return_final_answer(question: str) ->str:
+    math_final_answer_prompt = "You are a data extraction bot. You must read the following input and extract the final mathemtatical answer. Your response should be ONLY the final result found in the text, either a number or variable. Do not include any other explanation. Here is the input:\n\n"
 
-    return ""
+    resp = call_model_chat_completions(
+        prompt=question, 
+        system=math_final_answer_prompt 
+    )
+    return resp.get("text", question).strip()
+
+def calculator(exp: str) -> str:
+    """Basic math evaluator."""
+    try:
+        final_expression = exp.replace('$', '').replace(',', '').strip()
+        return str(eval(final_expression, {"__builtins__": None}, {}))
+    except Exception as e:
+        return f"Error w calculator: {e}"
+
+def tool_augmented_reasoning(question: str) -> str:
+    math_assistant_prompt = (
+        "You are a math assistant. Think step-by-step to solve the problem. "
+        "Whenever you need to do arithmetic, put the expression inside double square brackets ike this: [[328 / 2]]. I will provide the result. "
+        "Once you have the final answer, state it clearly."
+    )
+    
+    current_prompt = question
+    
+    for i in range(6):
+        resp = call_model_chat_completions(prompt=current_prompt, system=math_assistant_prompt)
+        text = resp.get("text", "")
+        calculation_required = re.search(r"\[\[(.*?)\]\]", text)
+        
+        if calculation_required:
+            equation = calculation_required.group(1)
+            result = calculator(equation)
+            current_prompt += f"\nAssistant: {text}\nResult of [[{equation}]]: {result}"
+        else:
+            return return_final_answer(text)
+            
+    return return_final_answer(text)
+
 
 MATH_KEYWORDS = [
     "calculate", "compute", "evaluate", "solve", "how many", "probability", "difference", "$","¥", "£", "€", "+", "-", "*", "/", "equation", "formula", "=", "find the", "ration", "average", "product"
@@ -249,7 +287,7 @@ COMMON_SENSE_KEYWORDS = [
     "can", "could", "would", "should", "were", "does", "did"
 ]
 FUTURE_PREDICTION_KEYWORDS = [
-    "predict", "will happen", "\\boxed\{your_prediction\}", "predict future events"
+    "predict", "will happen", "\\boxed{your_prediction}", "predict future events"
 ]
 
 
@@ -289,3 +327,13 @@ def route_question(question: str) -> str:
         return tool_augmented_reasoning(question)
         
 
+if __name__ == "__main__":
+
+    test_question = "What is the product of the real roots of the equation $x^2 + 18x + 30 = 2 \\sqrt{x^2 + 18x + 45}$ ?"
+    
+    print(f"question:\n{test_question}\n")
+    
+    final_answer = tool_augmented_reasoning(test_question)
+    
+    print("answer: \n")
+    print(final_answer)
