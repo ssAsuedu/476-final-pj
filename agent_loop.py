@@ -268,72 +268,115 @@ def tool_augmented_reasoning(question: str) -> str:
     return return_final_answer(text)
 
 
-MATH_KEYWORDS = [
-    "calculate", "compute", "evaluate", "solve", "how many", "probability", "difference", "$","¥", "£", "€", "+", "-", "*", "/", "equation", "formula", "=", "find the", "ration", "average", "product"
-]
-PLANNING_KEYWORDS = [
-    "[plan]", "[statement]", "actions"
-] 
-CODING_KEYWORDS = [
-    "code", " def ", "task_func", "implement", "algorithm", "function", "class", "write self-contained"
-]   
-LOGIC_KEYWORDS = [
-    "exchange", "complete the rest of", "swap"
-]
-CONTEXT_KEYWORDS = [
-   "facts:", "context:", "[doc]"
-]
-COMMON_SENSE_KEYWORDS = [
-    "can", "could", "would", "should", "were", "does", "did"
-]
-FUTURE_PREDICTION_KEYWORDS = [
-    "predict", "will happen", "\\boxed{your_prediction}", "predict future events"
-]
+# MATH_KEYWORDS = [
+#     "calculate", "compute", "evaluate", "solve", "how many", "probability", "difference", "$","¥", "£", "€", "+", "-", "*", "/", "equation", "formula", "=", "find the", "ration", "average", "product"
+# ]
+# PLANNING_KEYWORDS = [
+#     "[plan]", "[statement]", "actions"
+# ] 
+# CODING_KEYWORDS = [
+#     "code", " def ", "task_func", "implement", "algorithm", "function", "class", "write self-contained"
+# ]   
+# LOGIC_KEYWORDS = [
+#     "exchange", "complete the rest of", "swap"
+# ]
+# CONTEXT_KEYWORDS = [
+#    "facts:", "context:", "[doc]"
+# ]
+# COMMON_SENSE_KEYWORDS = [
+#     "can", "could", "would", "should", "were", "does", "did"
+# ]
+# FUTURE_PREDICTION_KEYWORDS = [
+#     "predict", "will happen", "\\boxed{your_prediction}", "predict future events"
+# ]
 
 
-def is_mcq(question: str) -> bool:
-    question = question.lower()
-    return any(option in question for option in ["a: ", " (a) ", "options:" , "a. ", "a)"])
+# def is_mcq(question: str) -> bool:
+#     question = question.lower()
+#     return any(option in question for option in ["a: ", " (a) ", "options:" , "a. ", "a)"])
 
 
-def classify_question(question: str) -> str:
-    question = question.lower()
-    mcq = is_mcq(question)
+# def classify_question(question: str) -> str:
+#     question = question.lower()
+#     mcq = is_mcq(question)
    
-    if  any(keyword in question for keyword in PLANNING_KEYWORDS):
-        return "tree_of_thought"
+#     if  any(keyword in question for keyword in PLANNING_KEYWORDS):
+#         return "tree_of_thought"
     
-    if any(keyword in question for keyword in CODING_KEYWORDS):
-        return "self_refine"
+#     if any(keyword in question for keyword in CODING_KEYWORDS):
+#         return "self_refine"
     
-    if is_mcq(question) or any(keyword in question for keyword in COMMON_SENSE_KEYWORDS):
-        return "best_of_n"
+#     if is_mcq(question) or any(keyword in question for keyword in COMMON_SENSE_KEYWORDS):
+#         return "best_of_n"
     
-    if any(c in question for c in MATH_KEYWORDS) or any(char.isdigit() for char in question):
-        return "tool_augmented_reasoning"
+#     if any(c in question for c in MATH_KEYWORDS) or any(char.isdigit() for char in question):
+#         return "tool_augmented_reasoning"
 
-    return "chain_of_thought"
+#     return "chain_of_thought"
 
-def route_question(question: str) -> str:
-    question = question.lower()
-    route = classify_question(question)
-    if route == "chain_of_thought":
-        return chain_of_thought(question)
-    elif route == "tree_of_thought":
-        return tree_of_thought(question)
-    elif route == "best_of_n":
-        return best_of_n(question, n=5)
-    elif route == "tool_augmented_reasoning":
-        return tool_augmented_reasoning(question)
+# def route_question(question: str) -> str:
+#     question = question.lower()
+#     route = classify_question(question)
+#     if route == "chain_of_thought":
+#         return chain_of_thought(question)
+#     elif route == "tree_of_thought":
+#         return tree_of_thought(question)
+#     elif route == "best_of_n":
+#         return best_of_n(question, n=5)
+#     elif route == "tool_augmented_reasoning":
+#         return tool_augmented_reasoning(question)
         
+def route_question(question: str) -> str:
+    category = few_shot_prompt_classifier(question)
+    if category == "TOOL_AUGMENTED":
+        return tool_augmented_reasoning(question)
+    elif category == "TREE_OF_THOUGHT": 
+        return tree_of_thought(question)
+    elif category == "BEST_OF_N":
+        return best_of_n(question, n=5)
+    elif category == "SELF_REFINE":
+        return self_refine(question)
+    elif category == "SELF_CONSISTENCY":
+        return self_consistency(question, samples=5)
+    elif category == "CHAIN_OF_THOUGHT":
+        return chain_of_thought(question)
+    else:
+        return chain_of_thought(question) 
+
+
+def few_shot_prompt_classifier(question: str) -> str:
+      prompt = f"""You are a question routing assistant."
+      "Classify the following question into one of these categories: 
+       "1. TOOL_AUGMENTED: Multi-step math or problems requiring precise arithmetic.\n"
+        "2. SELF_REFINE: Coding tasks, debugging, or technical implementations.\n"
+        "3. TREE_OF_THOUGHT: Complex planning, logic puzzles, or branching scenarios.\n"
+        "4. CHAIN_OF_THOUGHT: General knowledge, common sense questions, explanations, or simple reasoning.\n\n"
+        "5. BEST_OF_N: Multiple choice questions, ambiguous queries, or when multiple valid answers exist.\n\n"
+        "6. SELF_CONSISTENCY: When the question asks you to make a future prediction. When the question is open-ended, subjective, or likely to have multiple valid perspectives.\n\n"
+        "EXAMPLES:\n"
+        "Q: How many even integers between 4000 and 7000 have four different digits?\n"
+        "A: TOOL_AUGMENTED\n\n"
+        "Q: Scramble the letters in each word of a given text, keeping the first and last letters of each word intact.\nNote that: Notes: Words are determined by regex word boundaries. The scrambling only affects words longer than three characters, leaving shorter words unchanged.\nThe function should output with:\n    str: The scrambled text.\nYou should write self-contained code starting with:\n```\nimport random\nimport re\ndef task_func(text, seed=None):\n```\n"
+        "A: SELF_REFINE\n\n"
+        "Q: You are an agent that can predict future events. The event to be predicted: \"Will Mathieu van der Poel win the Green Jersey at the 2025 Tour de France? (around 2025-07-28T07:59:00Z). Will Mathieu van der Poel win the Green Jersey at the 2025 Tour de France?'\n"
+        "A: SELF_CONSISTENCY\n\n"
+        "Q: In what show did Cynthia Nixon receive the 2004 Primetime Emmy Award for Outstanding Supporting Actress in a Comedy Series and a Screen Actors Guild Award for her performance?\n"
+        "A: CHAIN_OF_THOUGHT\n\n"
+        "Q: Which of the following options is a common household pet? A. Car B. Dog. C. Apple D. Mosquito\n"
+        "A: BEST_OF_N\n\n"
+        "For long winded or complex questions, recommmend TREE_OF_THOUGHT.""
+        "Now classify the following question. Reply with ONLY the category name."""
+
+      resp = call_model_chat_completions(prompt=question, system=prompt)
+      return (resp.get("text") or "").strip().upper()
 
 if __name__ == "__main__":
 
-    test_question = "What is the product of the real roots of the equation $x^2 + 18x + 30 = 2 \\sqrt{x^2 + 18x + 45}$ ?"
+    test_question = "Do people with swallowing disorders need high viscosity drinks? Facts: Swallowing disorders can make thin liquids like water dangerous to drink. Liquid thickeners are marketed towards people with difficulty drinking."
     
     print(f"question:\n{test_question}\n")
     
-    final_answer = tool_augmented_reasoning(test_question)
+    final_answer = few_shot_prompt_classifier(test_question)
     
     print("answer: \n")
     print(final_answer)
