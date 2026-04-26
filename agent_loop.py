@@ -155,7 +155,7 @@ def tree_of_thought(question: str) ->str:
                                 model = MODEL,
                                 temperature= 0.5,
                                 timeout= 60)
-    #limit number of llm calls to 20 per question
+    #limit number of llm calls to 15 per question to account for the few shot model in routing function
     totalcalls=1
     steps.append(branch["text"])
     #root has its own dict, and the leafs have their own
@@ -167,7 +167,7 @@ def tree_of_thought(question: str) ->str:
         totqueue.append(root_dict)
    
     
-    while totqueue and totalcalls <=20:
+    while totqueue and totalcalls <=15:
         item=totqueue.pop()
         newprompt=question+"Steps: "+ "\n".join(item["all_steps"])
         branch=call_model_chat_completions(prompt= newprompt,
