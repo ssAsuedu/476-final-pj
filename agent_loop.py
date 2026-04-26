@@ -250,7 +250,66 @@ def tree_of_thought(question: str) ->str:
 
 
 
+def tool_augmented_reasoning(question: str) ->str:
+
+    return ""
+
+MATH_KEYWORDS = [
+    "calculate", "compute", "evaluate", "solve", "how many", "probability", "difference", "$","¥", "£", "€", "+", "-", "*", "/", "equation", "formula", "=", "find the", "ration", "average", "product"
+]
+PLANNING_KEYWORDS = [
+    "[plan]", "[statement]", "actions"
+] 
+CODING_KEYWORDS = [
+    "code", " def ", "task_func", "implement", "algorithm", "function", "class", "write self-contained"
+]   
+LOGIC_KEYWORDS = [
+    "exchange", "complete the rest of", "swap"
+]
+CONTEXT_KEYWORDS = [
+   "facts:", "context:", "[doc]"
+]
+COMMON_SENSE_KEYWORDS = [
+    "can", "could", "would", "should", "were", "does", "did"
+]
+FUTURE_PREDICTION_KEYWORDS = [
+    "predict", "will happen", "\\boxed\{your_prediction\}", "predict future events"
+]
 
 
+def is_mcq(question: str) -> bool:
+    question = question.lower()
+    return any(option in question for option in ["a: ", " (a) ", "options:" , "a. ", "a)"])
+
+
+def classify_question(question: str) -> str:
+    question = question.lower()
+    mcq = is_mcq(question)
+   
+    if  any(keyword in question for keyword in PLANNING_KEYWORDS):
+        return "tree_of_thought"
+    
+    if any(keyword in question for keyword in CODING_KEYWORDS):
+        return "self_refine"
+    
+    if is_mcq(question) or any(keyword in question for keyword in COMMON_SENSE_KEYWORDS):
+        return "best_of_n"
+    
+    if any(c in question for c in MATH_KEYWORDS) or any(char.isdigit() for char in question):
+        return "tool_augmented_reasoning"
+
+    return "chain_of_thought"
+
+def route_question(question: str) -> str:
+    question = question.lower()
+    route = classify_question(question)
+    if route == "chain_of_thought":
+        return chain_of_thought(question)
+    elif route == "tree_of_thought":
+        return tree_of_thought(question)
+    elif route == "best_of_n":
+        return best_of_n(question, n=5)
+    elif route == "tool_augmented_reasoning":
+        return tool_augmented_reasoning(question)
         
 
