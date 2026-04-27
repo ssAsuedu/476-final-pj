@@ -19,7 +19,7 @@ MODEL    = os.getenv("MODEL_NAME", "qwen3-30b-a3b-instruct-2507")
 
 
 #copy pasted from given notebook
-basesystem="You are a helpful assistant. Reply with only the final answer—no explanation."
+basesystem="You are a helpful assistant. Reply with only the final answer—no explanation. If unsure, give your best guess. Never return an empty response."
 
 def call_model_chat_completions(prompt: str,
                                 system= basesystem,
