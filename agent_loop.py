@@ -19,7 +19,7 @@ MODEL    = os.getenv("MODEL_NAME", "qwen3-30b-a3b-instruct-2507")
 
 
 #copy pasted from given notebook
-basesystem="You are a helpful assistant. Reply with only the final answer—no explanation."
+basesystem="You are a helpful assistant. Reply with only the final answer—no explanation. If unsure, give your best guess. Never return an empty response."
 
 def call_model_chat_completions(prompt: str,
                                 system= basesystem,
@@ -165,6 +165,8 @@ def tree_of_thought(question: str) ->str:
     root_dict["validity"]=True
     if branch["text"] != "None":
         totqueue.append(root_dict)
+    
+    best_answer=branch["text"]
    
     
     while totqueue and totalcalls <=15:
@@ -185,7 +187,8 @@ def tree_of_thought(question: str) ->str:
             branch_dict["current_step"]=branch["text"]
             branch_dict["validity"]=validity
             if "ANSWER" in branch["text"]:
-                return branch["text"]
+                #outputs everything after answer label
+                return branch["text"].split("ANSWER: ")[-1]
             totqueue.append(branch_dict)      
         else:
             best_answer=branch["text"]
@@ -360,8 +363,9 @@ def few_shot_prompt_classifier(question: str) -> str:
         "For long winded or complex questions, recommmend TREE_OF_THOUGHT.""
         "For sequential multi-step problems that do not involve math, but require reasoning, recommend LEAST_TO_MOST."
         "Now classify the following question. Reply with ONLY the category name."""
-
+        
       resp = call_model_chat_completions(prompt=question, system=prompt)
+ 
       return (resp.get("text") or "").strip().upper()
 
 if __name__ == "__main__":
