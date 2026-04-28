@@ -163,7 +163,7 @@ def tree_of_thought(question: str) ->str:
     root_dict["all_steps"]=steps
     root_dict["current_step"]=branch["text"]
     root_dict["validity"]=True
-    if branch["text"] != "None":
+    if branch["text"] != "None" and branch["text"] is not None:
         totqueue.append(root_dict)
     
     best_answer=branch["text"]
@@ -171,7 +171,7 @@ def tree_of_thought(question: str) ->str:
     
     while totqueue and totalcalls <=15:
         item=totqueue.pop()
-        newprompt=question+"Steps: "+ "\n".join(item["all_steps"])
+        newprompt=question + "Steps: " + "\n".join(str(step) for step in item["all_steps"])
         branch=call_model_chat_completions(prompt= newprompt,
                                 system= tot_system,
                                 model = MODEL,
@@ -180,7 +180,7 @@ def tree_of_thought(question: str) ->str:
         totalcalls+=1
         validity=self_evaluate(question=question, prediction=branch["text"], model=MODEL)
         totalcalls+=1
-        if validity and branch["text"] != "None": 
+        if validity and branch["text"] != "None" and branch["text"] is not None: 
             branch_dict={}       
             # steps.append(branch)
             branch_dict["all_steps"]=item["all_steps"]
@@ -252,7 +252,7 @@ def self_refine(question: str) -> str:
     return refined if refined else initial
 
 def return_final_math_answer(question: str) ->str:
-    math_final_answer_prompt = "You are a data extraction bot. You must read the following input and extract the final mathemtatical answer. Your response should be ONLY the final result found in the text, either a number or variable. Do not include any other explanation. Here is the input:\n\n"
+    math_final_answer_prompt = "You are a data extraction bot. You must read the following input and extract the final mathemtatical answer. Note that if input is formatted in a specific format, such as Solution: <expression>, you should preserve that exact response and return that entire formatted response line. Otherwise, your response should be ONLY the final result found in the text, either a number or variable. Do not include any other explanation. Here is the input:\n\n"
 
     resp = call_model_chat_completions(
         prompt=question, 
@@ -288,7 +288,7 @@ def tool_augmented_reasoning(question: str) -> str:
     
     for i in range(6):
         resp = call_model_chat_completions(prompt=current_prompt, system=math_assistant_prompt)
-        text = resp.get("text", "")
+        text = resp.get("text") or ""
         calculation_required = re.search(r"\[\[(.*?)\]\]", text)
         
         if calculation_required:
